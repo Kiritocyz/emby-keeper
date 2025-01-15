@@ -94,11 +94,13 @@ def check_config(config):
                         Optional("jellyfin"): bool,
                         Optional("ua"): str,
                         Optional("client"): str,
+                        Optional("client_version"): str,
                         Optional("device"): str,
                         Optional("device_id"): str,
                         Optional("allow_multiple"): bool,
                         Optional("allow_stream"): bool,
                         Optional("cf_challenge"): bool,
+                        Optional("use_proxy"): bool,
                     }
                 )
             ],

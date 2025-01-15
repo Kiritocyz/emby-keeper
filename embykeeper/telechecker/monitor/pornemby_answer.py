@@ -3,6 +3,7 @@ import csv
 from datetime import datetime
 from pathlib import Path
 import random
+import re
 
 from pyrogram.types import Message
 from pyrogram.errors import RPCError
@@ -14,7 +15,7 @@ from ._base import Monitor
 
 
 class _PornembyAnswerResultMonitor(Monitor):
-    name = "Pornemby 科举答案"
+    name = "Pornemby 问题答案"
     chat_keyword = r"问题\d*：(.*?)\n+A:(.*)\n+B:(.*)\n+C:(.*)\n+D:(.*)\n+答案为：([ABCD])"
     additional_auth = ["pornemby_pack"]
     allow_edit = True
@@ -27,7 +28,7 @@ class _PornembyAnswerResultMonitor(Monitor):
 
 
 class _PornembyAnswerAnswerMonitor(Monitor):
-    name = "Pornemby 科举"
+    name = "Pornemby 问题回答"
     history_chat_name = "Pornemby"
     chat_user = [
         "pornemby_question_bot",
@@ -35,19 +36,19 @@ class _PornembyAnswerAnswerMonitor(Monitor):
         "PronembyTGBot3_bot",
         "PornembyBot",
         "Porn_Emby_Bot",
+        "Porn_Emby_Script",
     ]
     chat_keyword = r"问题\d*：(.*?)\n+(A:.*\n+B:.*\n+C:.*\n+D:.*)\n(?!\n*答案)"
     additional_auth = ["pornemby_pack"]
-    allow_edit = True
 
     cache = {}
     lock = asyncio.Lock()
 
     key_map = {
-        "A": "🅰",
-        "B": "🅱",
-        "C": "🅲",
-        "D": "🅳",
+        "A": ["A", "🅰"],
+        "B": ["B", "🅱"],
+        "C": ["C", "🅲"],
+        "D": ["D", "🅳"],
     }
 
     def __init__(self, *args, **kw):
@@ -156,9 +157,12 @@ class _PornembyAnswerAnswerMonitor(Monitor):
         elif self.config.get("only_history", False):
             self.log.info(f"未从历史缓存找到问题, 请自行回答: {spec}.")
         else:
+            question = key[0]
+            choices = key[1]
+            question = re.sub(r"\([^\)]*From资料库:第\d+题\)", "", question)
             for retries in range(3):
                 self.log.debug(f"未从历史缓存找到问题, 开始请求云端问题回答: {spec}.")
-                result, by = await Link(self.client).pornemby_answer(key[0] + "\n" + key[1])
+                result, by = await Link(self.client).pornemby_answer(question + "\n" + choices)
                 if result:
                     self.log.info(f"请求 {by or '云端'} 问题回答为{result}: {spec}.")
                     break
@@ -169,8 +173,15 @@ class _PornembyAnswerAnswerMonitor(Monitor):
                 return
         try:
             await asyncio.sleep(random.uniform(2, 4))
-            answer = await message.click(self.key_map[result])
-            self.log.debug(f"回答返回值: {answer.message} {spec}.")
+            buttons = [k.text for r in message.reply_markup.inline_keyboard for k in r]
+            answer_options = self.key_map[result]
+            for button_text in buttons:
+                if button_text in answer_options:
+                    answer = await message.click(button_text)
+                    self.log.debug(f"回答返回值: {answer.message} {spec}.")
+                    break
+            else:
+                self.log.info(f"点击失败: 未找到匹配的按钮文本 {result} {spec}.")
         except KeyError:
             self.log.info(f"点击失败: {result} 不是可用的答案 {spec}.")
         except RPCError:

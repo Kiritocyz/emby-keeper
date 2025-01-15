@@ -40,6 +40,7 @@ from pyrogram.errors import (
     FloodWait,
     PhoneNumberInvalid,
     PhoneNumberBanned,
+    BadRequest,
 )
 from pyrogram.storage.storage import Storage
 from pyrogram.handlers import (
@@ -52,10 +53,10 @@ from pyrogram.handlers import (
 from pyrogram.handlers.handler import Handler
 from aiocache import Cache
 import aiohttp
-from aiohttp_socks import ProxyConnector, ProxyType, ProxyConnectionError, ProxyTimeoutError
+from aiohttp_socks import ProxyConnectionError, ProxyTimeoutError
 
 from embykeeper import var, __name__ as __product__, __version__
-from embykeeper.utils import async_partial, show_exception, to_iterable
+from embykeeper.utils import async_partial, show_exception, to_iterable, get_connector
 
 if typing.TYPE_CHECKING:
     from telethon import TelegramClient
@@ -156,7 +157,7 @@ class Dispatcher(dispatcher.Dispatcher):
                     parsed_update, handler_type = (
                         await parser(update, users, chats) if parser is not None else (None, type(None))
                     )
-                except ValueError:
+                except (ValueError, BadRequest):
                     continue
 
                 async with self.mutex:
@@ -221,7 +222,6 @@ class Client(pyrogram.Client):
         self._special_invoke_lock = asyncio.Lock()
         self._last_invoke = {}
         self._invoke_lock = asyncio.Lock()
-        self._login_time: datetime = None
         self._config_index: int = None
 
     async def authorize(self):
@@ -423,15 +423,6 @@ class Client(pyrogram.Client):
         query_name = query.__class__.__name__
 
         if query_name in special_methods:
-            if self._login_time:
-                time_since_login = (datetime.now() - self._login_time).total_seconds()
-                if time_since_login < 5:
-                    wait_time = 5 - time_since_login
-                    logger.info(
-                        f"距离登录时间 {time_since_login:.1f} 秒, 等待 {wait_time:.1f} 秒以执行下一步操作."
-                    )
-                    await asyncio.sleep(wait_time)
-
             async with self._special_invoke_lock:
                 now = datetime.now().timestamp()
                 last_invoke = self._last_special_invoke.get(query_name, 0)
@@ -890,23 +881,9 @@ class ClientsSession:
         if not self.watch:
             self.__class__.watch = asyncio.create_task(self.watchdog())
 
-    def get_connector(self, proxy=None, **kw):
-        if proxy:
-            connector = ProxyConnector(
-                proxy_type=ProxyType[proxy["scheme"].upper()],
-                host=proxy["hostname"],
-                port=proxy["port"],
-                username=proxy.get("username", None),
-                password=proxy.get("password", None),
-                **kw,
-            )
-        else:
-            connector = aiohttp.TCPConnector(**kw)
-        return connector
-
     async def test_network(self, proxy=None):
         url = "https://www.gstatic.com/generate_204"
-        connector = self.get_connector(proxy=proxy)
+        connector = get_connector(proxy=proxy)
         async with aiohttp.ClientSession(connector=connector) as session:
             try:
                 async with session.get(url) as resp:
@@ -932,23 +909,18 @@ class ClientsSession:
                 return False
 
     async def test_time(self, proxy=None):
-        url = "https://timeapi.io/api/Time/current/zone?timeZone=UTC"
-        connector = self.get_connector(proxy=proxy)
+        url = "https://ip.ddnspod.com/timestamp"
+        connector = get_connector(proxy=proxy)
         async with aiohttp.ClientSession(connector=connector) as session:
             try:
                 async with session.get(url) as resp:
                     if resp.status == 200:
-                        resp_dict: dict = await resp.json()
+                        timestamp = int((await resp.content.read()).decode())
                     else:
                         logger.warning(f"世界时间接口异常, 系统时间检测将跳过, 敬请注意. 程序将继续运行.")
 
-                api_time_str = resp_dict["dateTime"]
-                api_time = datetime.strptime(api_time_str.split(".")[0], "%Y-%m-%dT%H:%M:%S")
-                api_time = api_time.replace(tzinfo=timezone.utc)
-                api_timestamp = api_time.timestamp()
-
                 nowtime = datetime.now(timezone.utc).timestamp()
-                if abs(nowtime - api_timestamp) > 30:
+                if abs(nowtime - timestamp / 1000) > 30:
                     logger.warning(
                         f"您的系统时间设置不正确, 与世界时间差距过大, 可能会导致连接失败, 敬请注意. 程序将继续运行."
                     )
@@ -1085,7 +1057,7 @@ class ClientsSession:
                         sleep_threshold=30,
                     )
                     try:
-                        await asyncio.wait_for(client.start(), 120)
+                        await asyncio.wait_for(client.start(), 20)
                     except asyncio.TimeoutError:
                         if proxy:
                             logger.error(f"无法连接到 Telegram 服务器, 请检查您代理的可用性.")
@@ -1159,7 +1131,6 @@ class ClientsSession:
                 with open(session_string_file, "w+", encoding="utf-8") as f:
                     f.write(await client.export_session_string())
             logger.debug(f'登录账号 "{client.phone_number}" 成功.')
-            client._login_time = datetime.now()
             client._config_index = index
             return client
 
