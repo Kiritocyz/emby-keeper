@@ -23,7 +23,7 @@ from rich.prompt import Prompt
 from appdirs import user_data_dir
 from loguru import logger
 import pyrogram
-from pyrogram import raw, types, utils, filters, dispatcher, session
+from pyrogram import raw, types, utils, filters, dispatcher
 from pyrogram.enums import SentCodeType
 from pyrogram.errors import (
     ChannelPrivate,
@@ -41,6 +41,7 @@ from pyrogram.errors import (
     PhoneNumberInvalid,
     PhoneNumberBanned,
     BadRequest,
+    AuthKeyDuplicated,
 )
 from pyrogram.storage.storage import Storage
 from pyrogram.handlers import (
@@ -52,11 +53,10 @@ from pyrogram.handlers import (
 
 from pyrogram.handlers.handler import Handler
 from aiocache import Cache
-import aiohttp
-from aiohttp_socks import ProxyConnectionError, ProxyTimeoutError
+import httpx
 
 from embykeeper import var, __name__ as __product__, __version__
-from embykeeper.utils import async_partial, show_exception, to_iterable, get_connector
+from embykeeper.utils import async_partial, get_proxy_str, show_exception, to_iterable
 
 if typing.TYPE_CHECKING:
     from telethon import TelegramClient
@@ -218,10 +218,6 @@ class Client(pyrogram.Client):
         self.cache = Cache()
         self.lock = asyncio.Lock()
         self.dispatcher = Dispatcher(self)
-        self._last_special_invoke = {}
-        self._special_invoke_lock = asyncio.Lock()
-        self._last_invoke = {}
-        self._invoke_lock = asyncio.Lock()
         self._config_index: int = None
 
     async def authorize(self):
@@ -408,46 +404,6 @@ class Client(pyrogram.Client):
             yield future
         finally:
             await self.remove_handler(handler, group=0)
-
-    async def invoke(
-        self: "pyrogram.Client",
-        query: raw.core.TLObject,
-        retries: int = session.Session.MAX_RETRIES,
-        timeout: float = session.Session.WAIT_TIMEOUT,
-        sleep_threshold: float = None,
-        business_connection_id: str = None,
-    ):
-        special_methods = {"SendMessage", "DeleteMessages"}
-        except_methods = {"GetMessages", "GetChannelDifference", "GetStickerSet"}
-
-        query_name = query.__class__.__name__
-
-        if query_name in special_methods:
-            async with self._special_invoke_lock:
-                now = datetime.now().timestamp()
-                last_invoke = self._last_special_invoke.get(query_name, 0)
-                if now - last_invoke < 3:
-                    wait_time = 3 - (now - last_invoke)
-                    await asyncio.sleep(wait_time)
-                self._last_special_invoke[query_name] = datetime.now().timestamp()
-
-        if query_name not in except_methods:
-            async with self._invoke_lock:
-                now = datetime.now().timestamp()
-                last_invoke = self._last_invoke.get(query_name, 0)
-                if now - last_invoke < 1:
-                    wait_time = 1 - (now - last_invoke)
-                    await asyncio.sleep(wait_time)
-                self._last_invoke[query_name] = datetime.now().timestamp()
-
-        logger.trace(f"请求: {query_name}")
-        return await super().invoke(
-            query,
-            retries=retries,
-            timeout=timeout,
-            sleep_threshold=sleep_threshold,
-            business_connection_id=business_connection_id,
-        )
 
     @asynccontextmanager
     async def catch_edit(self, message: types.Message, filter=None):
@@ -883,51 +839,52 @@ class ClientsSession:
 
     async def test_network(self, proxy=None):
         url = "https://www.gstatic.com/generate_204"
-        connector = get_connector(proxy=proxy)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            try:
-                async with session.get(url) as resp:
-                    if resp.status == 204:
-                        return True
-                    else:
-                        logger.warning(f"检测网络状态时发生错误, 网络检测将被跳过.")
-                        return False
-            except (ProxyConnectionError, ProxyTimeoutError) as e:
-                un = connector._proxy_username
-                pw = connector._proxy_password
-                auth = f"{un}:{pw}@" if un or pw else ""
-                proxy_url = f"{connector._proxy_type.name.lower()}://{auth}{connector._proxy_host}:{connector._proxy_port}"
+        proxy_str = get_proxy_str(proxy)
+        try:
+            async with httpx.AsyncClient(http2=True, proxy=proxy_str) as client:
+                resp = await client.get(url)
+                if resp.status_code == 204:
+                    return True
+                else:
+                    logger.warning(f"检测网络状态时发生错误, 网络检测将被跳过.")
+                    return False
+        except httpx.ProxyError as e:
+            if proxy_str:
                 logger.warning(
-                    f"无法连接到您的代理 ({proxy_url}), 您的网络状态可能不好, 敬请注意. 程序将继续运行."
+                    f"无法连接到您的代理 ({proxy_str}), 您的网络状态可能不好, 敬请注意. 程序将继续运行."
                 )
-            except OSError as e:
-                logger.warning(f"无法连接到网络 (Google), 您的网络状态可能不好, 敬请注意. 程序将继续运行.")
-                return False
-            except Exception as e:
-                logger.warning(f"检测网络状态时发生错误, 网络检测将被跳过.")
-                show_exception(e)
-                return False
+            return False
+        except httpx.ConnectError:
+            logger.warning(f"无法连接到网络 (Google), 您的网络状态可能不好, 敬请注意. 程序将继续运行.")
+            return False
+        except Exception as e:
+            logger.warning(f"检测网络状态时发生错误, 网络检测将被跳过.")
+            show_exception(e)
+            return False
 
     async def test_time(self, proxy=None):
         url = "https://ip.ddnspod.com/timestamp"
-        connector = get_connector(proxy=proxy)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            try:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        timestamp = int((await resp.content.read()).decode())
-                    else:
-                        logger.warning(f"世界时间接口异常, 系统时间检测将跳过, 敬请注意. 程序将继续运行.")
-
+        proxy_str = get_proxy_str(proxy)
+        try:
+            async with httpx.AsyncClient(http2=True, proxy=proxy_str) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    timestamp = int(resp.content.decode())
+                else:
+                    logger.warning(f"世界时间接口异常, 系统时间检测将跳过, 敬请注意. 程序将继续运行.")
+                    return False
                 nowtime = datetime.now(timezone.utc).timestamp()
                 if abs(nowtime - timestamp / 1000) > 30:
                     logger.warning(
                         f"您的系统时间设置不正确, 与世界时间差距过大, 可能会导致连接失败, 敬请注意. 程序将继续运行."
                     )
-            except Exception as e:
-                logger.warning(f"检测世界时间发生错误, 时间检测将被跳过.")
-                show_exception(e)
-                return False
+        except httpx.HTTPError:
+            logger.warning(f"检测世界时间发生错误, 时间检测将被跳过.")
+            return False
+        except Exception as e:
+            logger.warning(f"检测世界时间发生错误, 时间检测将被跳过.")
+            show_exception(e)
+            return False
 
     @staticmethod
     async def get_session_string_from_telethon(account, proxy):
@@ -1072,7 +1029,7 @@ class ClientsSession:
                 except ApiIdPublishedFlood:
                     logger.warning(f'登录账号 "{account["phone"]}" 时发生 API key 限制, 将被跳过.')
                     break
-                except Unauthorized as e:
+                except (Unauthorized, AuthKeyDuplicated) as e:
                     if config_session_string:
                         logger.error(
                             f'账号 "{account["phone"]}" 由于配置中提供的 session 已被注销, 将被跳过.'
