@@ -14,7 +14,13 @@ from appdirs import user_data_dir
 from loguru import logger
 from PIL import Image
 from pyrogram import filters
-from pyrogram.errors import UsernameNotOccupied, FloodWait, UsernameInvalid, ChannelInvalid, ChannelPrivate
+from pyrogram.errors import (
+    UsernameNotOccupied,
+    FloodWait,
+    UsernameInvalid,
+    ChannelInvalid,
+    ChannelPrivate,
+)
 from pyrogram.handlers import EditedMessageHandler, MessageHandler
 from pyrogram.types import InlineKeyboardMarkup, Message, ReplyKeyboardMarkup
 from pyrogram.raw.functions.account import GetNotifySettings
@@ -22,7 +28,7 @@ from pyrogram.raw.types import PeerNotifySettings, InputNotifyPeer
 from thefuzz import fuzz, process
 
 from embykeeper import __name__ as __product__
-from embykeeper.data import get_datas
+from embykeeper.ocr import CharRange, OCRService
 from embykeeper.utils import show_exception, to_iterable, format_timedelta_human, AsyncCountPool
 
 from ..lock import ocrs, ocrs_lock
@@ -70,17 +76,6 @@ class CheckinResult(IntEnum):
     CHECKED = auto()
     FAIL = auto()
     IGNORE = auto()
-
-
-class CharRange(IntEnum):
-    NUMBER = 0
-    LLETTER = 1
-    ULETTER = 2
-    LLETTER_ULETTER = 3
-    NUMBER_LLETTER = 4
-    NUMBER_ULETTER = 5
-    NUMBER_LLETTER_ULETTER = 6
-    NOT_NUMBER_LLETTER_ULETTER = 7
 
 
 class BaseBotCheckin(ABC):
@@ -219,42 +214,6 @@ class BotCheckin(BaseBotCheckin):
                 await self.client.remove_handler(h, group=group)
             except ValueError:
                 pass
-
-    async def get_ocr(self, ocr: str = None, range: Optional[Union[CharRange, str]] = None):
-        """加载特定标签的 OCR 模型, 默认加载 ddddocr 默认模型."""
-        from ddddocr import DdddOcr
-        from onnxruntime.capi.onnxruntime_pybind11_state import InvalidProtobuf
-
-        while True:
-            async with ocrs_lock:
-                if ocr in ocrs:
-                    return ocrs[ocr]
-                use_probability = False
-                if not ocr:
-                    model = DdddOcr(beta=True, show_ad=False)
-                    if range:
-                        use_probability = True
-                        model.set_ranges(range)
-                else:
-                    data = []
-                    files = (f"{ocr}.onnx", f"{ocr}.json")
-                    async for p in get_datas(self.basedir, files, proxy=self.proxy, caller=self.name):
-                        if p is None:
-                            self.log.warning(f"初始化错误: 无法下载所需文件.")
-                            return None
-                        else:
-                            data.append(p)
-                    try:
-                        model = DdddOcr(
-                            show_ad=False, import_onnx_path=str(data[0]), charsets_path=str(data[1])
-                        )
-                    except InvalidProtobuf:
-                        self.log.warning(f"文件下载不完全, 正在重试下载.")
-                        Path(str(data[0])).unlink()
-                        Path(str(data[1])).unlink()
-                        continue
-                ocrs[ocr] = model, use_probability
-                return model, use_probability
 
     async def start(self):
         """签到器的入口函数."""
@@ -515,15 +474,14 @@ class BotCheckin(BaseBotCheckin):
     async def on_photo(self, message: Message):
         """分析分析传入的验证码图片并返回验证码."""
         data = await self.client.download_media(message, in_memory=True)
-        image = Image.open(data)
-        ocr, use_probability = await self.get_ocr(self.ocr)
-        if use_probability:
-            ocr_result = ocr.classification(image, probability=True)
-            ocr_text = ""
-            for i in ocr_result["probability"]:
-                ocr_text += ocr_result["charsets"][i.index(max(i))]
-        else:
-            ocr_text = ocr_result = ocr.classification(image)
+        ocr = await OCRService.get(
+            ocr_name=self.ocr,
+            char_range=self.bot_captcha_char_range,
+            basedir=self.basedir,
+            proxy=self.proxy,
+        )
+        with ocr:
+            ocr_text = await ocr.run(data)
         captcha = ocr_text.translate(str.maketrans("", "", string.punctuation)).replace(" ", "")
         if captcha:
             self.log.debug(f"[gray50]接收验证码: {captcha}.[/]")
