@@ -22,6 +22,8 @@ jobs:
 
     - name: Merge upstream changes
       run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
         git checkout main  # 切换到你的默认分支
         git merge upstream/main  # 合并上游仓库的更改
         git push origin main  # 推送更改到你的 fork 仓库
