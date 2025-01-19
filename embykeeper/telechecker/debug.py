@@ -199,6 +199,7 @@ async def saver(config: dict):
         async for tg in clients:
             tg.saver_queue = queue = asyncio.Queue()
             output = f"{tg.me.phone_number}.updates.json"
+            logger.info(f"已启动日志记录, 输出到: {output}.")
             await tg.add_handler(RawUpdateHandler(_saver_raw), group=10000)
             tasks.append(_saver_dumper(queue, output))
         await asyncio.gather(*tasks)

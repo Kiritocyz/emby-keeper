@@ -25,6 +25,8 @@ logger = logger.bind(scheme="embywatcher")
 class Connector(_Connector):
     """重写的 Emby 连接器, 以支持代理."""
 
+    playing_count = 0
+
     def __init__(
         self,
         url,
@@ -349,6 +351,19 @@ class Emby(_Emby):
             sortBy=sort,
             sortOrder="Ascending" if ascending else "Descending",
             limit=limit,
+            **kw,
+        )
+        return await self.process(resp)
+
+    @async_func
+    async def get_item(self, id, path="/Users/{UserId}/Items", fields=None, **kw):
+        if not fields:
+            fields = ["Path", "ParentId", "Overview", "PremiereDate", "DateCreated"]
+        resp = await self.connector.getJson(
+            f"{path}/{id}",
+            format="json",
+            recursive="true",
+            fields=fields,
             **kw,
         )
         return await self.process(resp)
