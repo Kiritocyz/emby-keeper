@@ -1,11 +1,7 @@
-from ._base import BotCheckin
+from ._templ_chat import TemplateCHATCheckin
 
 
-class OracleCheckin(BotCheckin):
+class OracleCheckin(TemplateCHATCheckin):
     name = "Oracle 群组签到"
     chat_name = "nba8668"
-    bot_checkin_cmd = "签到"
-
-    async def send_checkin(self, retry=False):
-        await super().send_checkin(retry=retry)
-        self.finished.set()
+    
