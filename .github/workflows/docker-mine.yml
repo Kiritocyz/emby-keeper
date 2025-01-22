@@ -2,6 +2,11 @@ name: My Docker Image Publish
 
 on:
   workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to build'
+        required: false
+        default: 'mine'
   push:
     branches:
       - 'mine'
