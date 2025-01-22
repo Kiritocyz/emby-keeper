@@ -6,11 +6,13 @@ import asyncio
 from typing import List
 from cachetools import TTLCache
 from pyrogram.types import Message, User, Chat
-from pyrogram.enums import ChatMemberStatus, MessageServiceType, MessagesFilter
+from pyrogram.enums import ChatMemberStatus, MessageServiceType, MessageEntityType
 from pyrogram.errors import BadRequest
 
 from ..lock import pornemby_alert, pornemby_messager_mids
 from ._base import Monitor
+
+__ignore__ = True
 
 
 class PornembyAlertMonitor(Monitor):
@@ -19,6 +21,8 @@ class PornembyAlertMonitor(Monitor):
     additional_auth = ["pornemby_pack"]
     allow_edit = True
     debug_no_log = True
+    trigger_interval = 0
+    trigger_sem = None
 
     user_alert_keywords = ["脚本", "真人", "admin", "全是", "举报", "每次", "机器人", "report"]
     admin_alert_keywords = ["不要", "封", "ban", "warn", "踢", "抓"]
@@ -35,6 +39,7 @@ class PornembyAlertMonitor(Monitor):
         self.member_status_cache_lock = asyncio.Lock()
         self.monitor_task = asyncio.create_task(self.monitor())
         self.pin_checked = False
+        self.pin_checked_lock = False
         return True
 
     async def check_admin(self, chat: Chat, user: User):
@@ -93,24 +98,16 @@ class PornembyAlertMonitor(Monitor):
             if reason:
                 msg += f" (原因: {reason})"
             msg += "."
-            self.log.bind(log=True).error(msg)
+            self.log.bind(msg=True).error(msg)
             async with self.lock:
                 self.alert_remaining = float("inf")
 
-    async def check_pinned(self, message: Message):
-        if message.service == MessageServiceType.PINNED_MESSAGE:
-            return message.pinned_message
-        elif (not message.text) and (not message.media) and (not message.service) and (not message.game):
-            async for message in self.client.search_messages(message.chat.id, filter=MessagesFilter.PINNED):
-                return message
-        else:
-            return None
-
     async def on_trigger(self, message: Message, key, reply):
-        # 管理员回复水群消息: 永久停止, 若存在关键词即回复
+        # 管理员回复水群消息, 永久停止, 若存在关键词即回复
         # 用户回复水群消息, 停止 3600 秒, 若存在关键词即回复
-
-        if message.reply_to_message_id in pornemby_messager_mids.get(self.client.me.id, []):
+        if message.reply_to_message_id and message.reply_to_message_id in pornemby_messager_mids.get(
+            self.client.me.id, []
+        ):
             if await self.check_admin(message.chat, message.from_user):
                 await self.set_alert(reason="管理员回复了水群消息")
             else:
@@ -125,33 +122,37 @@ class PornembyAlertMonitor(Monitor):
                         self.last_reply = datetime.now()
             return
 
-        # 置顶消息, 若不在列表中停止 3600 秒, 否则停止 86400 秒
-        pinned = await self.check_pinned(message)
-        if pinned:
-            self.pin_checked = True
-            keyword = self.check_keyword(pinned, self.user_alert_keywords + self.admin_alert_keywords)
+        # 管理员 @ 当前用户, 永久停止
+        # 非管理员 @ 当前用户, 停止 3600 秒
+        if message.entities:
+            for entity in message.entities:
+                if (
+                    entity.type == MessageEntityType.MENTION
+                    and entity.user
+                    and entity.user.id == self.client.me.id
+                ):
+                    if await self.check_admin(message.chat, message.from_user):
+                        await self.set_alert(reason="管理员 @ 了当前用户")
+                    else:
+                        await self.set_alert(3600, reason="非管理员 @ 了当前用户")
+                    return
+
+        # 新置顶消息包含关键词, 停止 86400 秒
+        if message.service == MessageServiceType.PINNED_MESSAGE:
+            keyword = self.check_keyword(
+                message.pinned_message, self.user_alert_keywords + self.admin_alert_keywords
+            )
             if keyword:
                 await self.set_alert(86400, reason=f'有新消息被置顶, 且包含风险关键词: "{keyword}"')
             else:
                 await self.set_alert(3600, reason="有新消息被置顶")
             return
 
-        if not self.pin_checked:
-            if message.chat.pinned_message:
-                keyword = self.check_keyword(pinned, self.user_alert_keywords + self.admin_alert_keywords)
-                if keyword:
-                    await self.set_alert(86400, reason=f'检查到现有置顶消息中包含风险关键词: "{keyword}"')
-                    self.pin_checked = True
-
-        # 管理员发送消息, 若不在列表中停止 3600 秒, 否则停止 86400 秒
-        # 用户发送列表中消息, 停止 1800 秒
-        if await self.check_admin(message.chat, message.from_user):
-            keyword = self.check_keyword(message, self.user_alert_keywords + self.admin_alert_keywords)
-            if keyword:
+        # 管理员发送消息包含关键词, 停止 86400 秒
+        # 用户发送消息包含关键词, 停止 1800 秒
+        keyword = self.check_keyword(message, self.user_alert_keywords + self.admin_alert_keywords)
+        if keyword:
+            if await self.check_admin(message.chat, message.from_user):
                 await self.set_alert(86400, reason=f'管理员发送了消息, 且包含风险关键词: "{keyword}"')
             else:
-                await self.set_alert(3600, reason="管理员发送了消息")
-        else:
-            keyword = self.check_keyword(message, self.user_alert_keywords)
-            if keyword:
                 await self.set_alert(1800, reason=f'非管理员发送了消息, 且包含风险关键词: "{keyword}"')
