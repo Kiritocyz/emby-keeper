@@ -30,11 +30,6 @@ jobs:
           git merge upstream/main
           git push origin main
           
-          # 合并 mine 分支并推送
-          git checkout mine
-          git merge upstream/main
-          git push origin mine
-          
           # 推送所有上游标签到您的仓库
           git push origin --tags  # 推送标签
         env:

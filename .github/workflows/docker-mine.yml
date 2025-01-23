@@ -2,14 +2,9 @@ name: My Docker Image Publish
 
 on:
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch to build'
-        required: false
-        default: 'mine'
   push:
     branches:
-      - 'mine'
+      - 'main'
     paths-ignore:
       - "*.md"
   release:
@@ -41,8 +36,6 @@ jobs:
           echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: mine  # 强制检出 mine 分支
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
