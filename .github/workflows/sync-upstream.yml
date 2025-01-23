@@ -2,7 +2,7 @@ name: Sync Upstream
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # 每天 UTC 时间 00:00 自动同步
+    - cron: '0 19 * * *'  # 每天 UTC 时间 19:00 自动同步
   workflow_dispatch:  # 允许手动触发
 
 jobs:
@@ -14,23 +14,36 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Add upstream repository
+      - name: Get latest upstream tag via API
+        id: get-tag
+        run: |
+          # 通过 GitHub API 获取最新 release 标签
+          LATEST_TAG=$(curl -sLH "Authorization: token ${{ secrets.UPSTREAM_TOKEN }}" \
+            https://api.github.com/repos/emby-keeper/emby-keeper/releases/latest \
+            | jq -r '.tag_name')
+      
+          echo "Latest upstream tag: $LATEST_TAG"
+          echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
+        
+      - name: Merge and tag
         run: |
           git remote add upstream https://github.com/emby-keeper/emby-keeper.git
-          git fetch upstream --tags  # 拉取上游分支和标签
-
-      - name: Merge upstream changes
-        run: |
+          git fetch upstream main
+      
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git remote set-url origin "https://$GH_TOKEN@github.com/${{ github.repository }}.git"
-          
-          # 合并 main 分支并推送
+      
+          # 合并 main 分支
           git checkout main
           git merge upstream/main
           git push origin main
-          
-          # 推送所有上游标签到您的仓库
-          git push origin --tags  # 推送标签
-        env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_TOKEN }}
+      
+          # 仅推送最新标签（如果不存在）
+          if ! git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
+            git tag "$LATEST_TAG"
+            git push origin "$LATEST_TAG"
+            echo "Created new tag: $LATEST_TAG"
+          else
+            echo "Tag $LATEST_TAG already exists. Skipping."
+          fi
