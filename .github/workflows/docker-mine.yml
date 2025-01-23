@@ -41,8 +41,9 @@ jobs:
       - name: Get latest tag
         id: get-latest-tag
         run: |
-          git fetch --prune --unshallow --tags
+          git fetch --tags
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag detected: $LATEST_TAG"
           echo "LATEST_TAG=$LATEST_TAG" >> $GITHUB_ENV
       - name: Docker meta
         id: meta
