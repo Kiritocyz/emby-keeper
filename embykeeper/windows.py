@@ -2,7 +2,6 @@ import os
 import platform
 import sys
 from msvcrt import getch
-from pathlib import Path
 from subprocess import Popen
 
 from rich import box
@@ -20,7 +19,16 @@ def generate_config():
     config_file = config.basedir / "config.toml"
     if config_file.exists():
         return
-    config.reload_conf()
+    try:
+        with open(config_file, "w+", encoding="utf-8") as f:
+            f.write(config.generate_example_config())
+    except OSError as e:
+        var.console.print(
+            f'无法写入默认配置文件 "{config_file}", 请确认是否有权限进行该目录写入: {e}, 请按任意键退出',
+            justify="center",
+        )
+        _ = getch()
+        sys.exit(1)
     message = Table.grid(padding=2)
     message.add_column()
     urls = Table.grid(padding=2)
@@ -44,7 +52,7 @@ def generate_config():
 
     _ = getch()
 
-    p = Popen(["start", config_file], shell=True)
+    p = Popen(["notepad.exe", str(config_file)], shell=True)
 
     if not p:
         var.console.print(f"配置文件打开失败, 请按任意键退出", justify="center")
