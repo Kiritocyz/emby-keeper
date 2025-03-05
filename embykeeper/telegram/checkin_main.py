@@ -31,19 +31,18 @@ class CheckinerManager:
         self._running: Set[str] = set()  # Currently running phones
         self._pool = AsyncTaskPool()
 
-        # Set up config change callbacks
         config.on_list_change("telegram.account", self._handle_account_change)
 
     def _handle_account_change(self, added: List[TelegramAccount], removed: List[TelegramAccount]):
         """Handle account additions and removals"""
         for account in removed:
             self.stop_account(account.phone)
-            logger.debug(f"{account.phone} 账号的签到及其计划任务已被清除.")
+            logger.info(f"{account.phone} 账号的签到及其计划任务已被清除.")
 
         for account in added:
             scheduler = self.schedule_account(account)
             self._pool.add(scheduler.schedule())
-            logger.debug(f"新增的 {account.phone} 账号的计划任务已增加.")
+            logger.info(f"新增的 {account.phone} 账号的计划任务已增加.")
 
     def stop_account(self, phone: str):
         """Stop scheduling and running tasks for an account"""
@@ -108,7 +107,7 @@ class CheckinerManager:
         finally:
             self._running.discard(account.phone)
 
-    def schedule_one(
+    def schedule_reschedule(
         self, ctx: RunContext, at: datetime, account: TelegramAccount, site: str
     ) -> asyncio.Task:
         account_ctx = RunContext.get_or_create(f"checkiner.account.{account.phone}")
@@ -159,7 +158,7 @@ class CheckinerManager:
                     elif result.status == RunStatus.RESCHEDULE:
                         if c.ctx.next_time:
                             log.debug("继续等待重新签到.")
-                            self.schedule_one(ctx, c.ctx.next_time, account, site_name)
+                            self.schedule_reschedule(ctx, c.ctx.next_time, account, site_name)
                     else:
                         log.debug("站点重新签到失败.")
         finally:
@@ -194,7 +193,10 @@ class CheckinerManager:
         sem = asyncio.Semaphore(config_to_use.concurrency)
         checkiners = []
         for cls in clses:
-            site_name = cls.__module__.rsplit(".", 1)[-1]
+            if hasattr(cls, "templ_name"):
+                site_name = cls.templ_name
+            else:
+                site_name = cls.__module__.rsplit(".", 1)[-1]
             site_ctx = RunContext.prepare(f"{site_name} 站点签到", parent_ids=ctx.id)
             checkiners.append(
                 cls(
@@ -232,9 +234,12 @@ class CheckinerManager:
             elif result.status == RunStatus.NONEED:
                 checked.append(c.name)
             elif result.status == RunStatus.RESCHEDULE:
-                site_name = c.__module__.rsplit(".", 1)[-1]
+                if hasattr(c, "templ_name"):
+                    site_name = c.templ_name
+                else:
+                    site_name = cls.__module__.rsplit(".", 1)[-1]
                 if c.ctx.next_time:
-                    self.schedule_one(ctx, c.ctx.next_time, account, site_name)
+                    self.schedule_reschedule(ctx, c.ctx.next_time, account, site_name)
                 checked.append(c.name)
             else:
                 failed.append(c.name)
