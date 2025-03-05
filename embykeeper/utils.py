@@ -127,6 +127,8 @@ class AsyncTyper(Typer):
                 async def main():
                     try:
                         await async_func(*_args, **_kwargs)
+                    except Exit as e:
+                        sys.exit(e.exit_code)
                     except Exception as e:
                         print("\r", end="", flush=True)
                         logger.critical(f"发生关键错误, {__name__.capitalize()} 将退出.")
@@ -141,8 +143,6 @@ class AsyncTyper(Typer):
                     loop.run_until_complete(main())
                 except KeyboardInterrupt:
                     print("\r正在停止...\r", end="", flush=True, file=sys.stderr)
-                except Exit as e:
-                    sys.exit(e.exit_code)
                 finally:
                     tasks = asyncio.all_tasks(loop)
                     for task in tasks:
