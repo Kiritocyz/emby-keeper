@@ -39,16 +39,16 @@ jobs:
             echo "🔄 No upstream changes"
             exit 0
           fi
-      
-          # 合并 origin 分支
-          git checkout origin
-          git merge upstream/main
-          git push origin origin
 
           # 合并 main 分支
           git checkout main
           git merge upstream/main
           git push origin main
+
+          # 合并 origin 分支
+          git checkout origin
+          git merge upstream/main
+          git push origin origin
       
           # 仅推送最新标签（如果不存在）
           if ! git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
