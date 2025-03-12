@@ -175,21 +175,14 @@ def healthz():
 
 @bp.route("/heartbeat")
 def heartbeat():
-    webpass = os.environ.get("EK_WEBPASS", "")
-    password = request.args.get("pass", None)
-    if (not password) or (not webpass):
-        return abort(403)
-    if password == webpass:
-        if app.config["proc"] is None:
-            start_proc()
-            return jsonify({"status": "restarted", "pid": app.config["proc"].pid}), 201
-        else:
-            return jsonify({"status": "running", "pid": app.config["proc"].pid}), 200
+    if app.config["proc"] is None:
+        start_proc()
+        return jsonify({"status": "restarted", "pid": app.config["proc"].pid}), 201
     else:
-        return abort(403)
+        return jsonify({"status": "running", "pid": app.config["proc"].pid}), 200
 
 
-@bp.errorhandler(404)
+@app.errorhandler(404)
 def page_not_found(e):
     return render_template("404.html", version=version, prefix=app.config["BASE_PREFIX"]), 404
 
@@ -276,7 +269,7 @@ def start_proc(instant=False):
         stdin=slave_fd,
         stdout=slave_fd,
         stderr=slave_fd,
-        env={**os.environ, "EK_CONFIG": app.config["config"]},
+        env={**os.environ, "EK_CONFIG": app.config["config"], "TZ": "Asia/Shanghai"},
         preexec_fn=os.setsid,
     )
     socketio.start_background_task(target=disconnect_on_proc_exit, proc=p)
