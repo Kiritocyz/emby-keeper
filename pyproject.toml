@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "embykeeper"
-version = "7.1.20"
+version = "7.1.22"
 authors = [
     {name = "jackzzs", email = "jackzzs@outlook.com"},
 ]
@@ -55,3 +55,11 @@ find = {namespaces = false}
 
 [tool.black]
 line-length = 110
+extend-exclude = '''
+# A regex preceded with ^/ will apply only to files and directories
+# in the root of the project.
+(
+  ^/config.example.toml
+  # | .*.toml
+)
+'''
