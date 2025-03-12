@@ -40,6 +40,11 @@ jobs:
             exit 0
           fi
       
+          # 合并 origin 分支
+          git checkout origin
+          git merge upstream/main
+          git push origin origin
+
           # 合并 main 分支
           git checkout main
           git merge upstream/main
