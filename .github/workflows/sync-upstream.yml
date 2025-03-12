@@ -46,9 +46,9 @@ jobs:
           git push origin main
 
           # 合并 original 分支
-          git checkout original
-          git merge upstream/main
-          git push origin original
+          # git checkout original
+          # git merge upstream/main
+          # git push origin original
       
           # 仅推送最新标签（如果不存在）
           if ! git rev-parse "$LATEST_TAG" >/dev/null 2>&1; then
